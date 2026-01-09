@@ -4,11 +4,26 @@ import { storage } from "./storage";
 import { api } from "@shared/routes";
 import { z } from "zod";
 import OpenAI from "openai";
+import Anthropic from "@anthropic-ai/sdk";
+import { GoogleGenAI } from "@google/genai";
 
-// Initialize OpenAI client using AI Integrations credentials with fallback for external deployment
+// Initialize AI clients using AI Integrations credentials
 const openai = new OpenAI({ 
   apiKey: process.env.AI_INTEGRATIONS_OPENAI_API_KEY || process.env.OPENAI_API_KEY,
   baseURL: process.env.AI_INTEGRATIONS_OPENAI_BASE_URL
+});
+
+const anthropic = new Anthropic({
+  apiKey: process.env.AI_INTEGRATIONS_ANTHROPIC_API_KEY,
+  baseURL: process.env.AI_INTEGRATIONS_ANTHROPIC_BASE_URL,
+});
+
+const gemini = new GoogleGenAI({
+  apiKey: process.env.AI_INTEGRATIONS_GEMINI_API_KEY,
+  httpOptions: {
+    apiVersion: "",
+    baseUrl: process.env.AI_INTEGRATIONS_GEMINI_BASE_URL,
+  },
 });
 
 export async function registerRoutes(
@@ -28,57 +43,101 @@ export async function registerRoutes(
     res.json(signal || null);
   });
 
-  // Generate a new signal (AI Analysis)
+  // Generate a new signal (Triple-AI Verification Analysis)
   app.post(api.signals.create.path, async (req, res) => {
     try {
       const { pair } = api.signals.create.input.parse(req.body);
       
-      // Prompt OpenAI to analyze and generate a signal
-      // We will provide it with some "mock" technical indicators context
-      const completion = await openai.chat.completions.create({
+      const prompt = `You are an expert forex trading AI. Analyze the ${pair} market for a 5-minute (M5) trade. 
+      Generate a signal JSON with:
+      - action: "BUY/CALL" or "SELL/PUT"
+      - confidence: number between 70 and 99
+      - analysis: brief technical reason (e.g., "RSI divergence at support level")
+      
+      Current Time: ${new Date().toLocaleTimeString()}
+      Return only the JSON object.`;
+
+      // 1. OpenAI (GPT-4o)
+      const gptTask = openai.chat.completions.create({
         model: "gpt-4o",
-        messages: [
-          {
-            role: "system",
-            content: `You are an expert forex trading AI. Analyze the ${pair} market for a 5-minute (M5) trade. 
-            Generate a signal JSON with the following fields: 
-            - action: "BUY/CALL" or "SELL/PUT"
-            - confidence: number between 70 and 99
-            - analysis: brief technical reason (e.g., "RSI divergence at support level")
-            
-            Current Time: ${new Date().toLocaleTimeString()}
-            Assume standard market session behavior.`
-          },
-        ],
+        messages: [{ role: "system", content: prompt }],
         response_format: { type: "json_object" }
+      }).then(res => JSON.parse(res.choices[0].message.content || "{}"));
+
+      // 2. Anthropic (Claude 3.5 Sonnet)
+      const claudeTask = anthropic.messages.create({
+        model: "claude-sonnet-4-5",
+        max_tokens: 1024,
+        messages: [{ role: "user", content: prompt }],
+      }).then(res => {
+        const text = res.content[0].type === 'text' ? res.content[0].text : '{}';
+        try {
+          // Extract JSON if it's wrapped in text
+          const jsonMatch = text.match(/\{[\s\S]*\}/);
+          return JSON.parse(jsonMatch ? jsonMatch[0] : text);
+        } catch (e) { return {}; }
       });
 
-      const aiResponse = JSON.parse(completion.choices[0].message.content || "{}");
+      // 3. Gemini (Flash)
+      const geminiTask = gemini.getGenerativeModel({ model: "gemini-3-flash-preview" })
+        .generateContent(prompt)
+        .then(res => {
+          const text = res.response.text();
+          try {
+            const jsonMatch = text.match(/\{[\s\S]*\}/);
+            return JSON.parse(jsonMatch ? jsonMatch[0] : text);
+          } catch (e) { return {}; }
+        });
+
+      // Run all AI analyses in parallel
+      const [gptRes, claudeRes, geminiRes] = await Promise.all([gptTask, claudeTask, geminiTask]);
+
+      // Consensus logic
+      const results = [
+        { model: 'OpenAI', ...gptRes },
+        { model: 'Anthropic', ...claudeRes },
+        { model: 'Gemini', ...geminiRes }
+      ];
+
+      const buys = results.filter(r => r.action?.includes('BUY') || r.action?.includes('CALL'));
+      const sells = results.filter(r => r.action?.includes('SELL') || r.action?.includes('PUT'));
+
+      let finalAction, verifiers;
+      if (buys.length >= 2) {
+        finalAction = "BUY/CALL";
+        verifiers = buys.map(b => b.model);
+      } else if (sells.length >= 2) {
+        finalAction = "SELL/PUT";
+        verifiers = sells.map(s => s.model);
+      } else {
+        // Fallback to highest confidence if no consensus
+        const best = results.sort((a, b) => (b.confidence || 0) - (a.confidence || 0))[0];
+        finalAction = best.action || "BUY/CALL";
+        verifiers = [best.model];
+      }
+
+      const avgConfidence = Math.round(results.reduce((acc, r) => acc + (r.confidence || 0), 0) / results.length);
+      const combinedAnalysis = results.map(r => `${r.model}: ${r.analysis}`).join(" | ");
       
       // Calculate times
       const now = new Date();
-      // Round UP to the next 5-minute interval
-      const minutes = now.getMinutes();
-      const roundedMinutes = Math.ceil((minutes + 1) / 5) * 5;
-      
+      const roundedMinutes = Math.ceil((now.getMinutes() + 1) / 5) * 5;
       const startTimeDate = new Date(now);
-      startTimeDate.setMinutes(roundedMinutes);
-      startTimeDate.setSeconds(0);
-      startTimeDate.setMilliseconds(0);
-      
-      const endTimeDate = new Date(startTimeDate.getTime() + 5 * 60000); // +5 mins from start
+      startTimeDate.setMinutes(roundedMinutes, 0, 0);
+      const endTimeDate = new Date(startTimeDate.getTime() + 5 * 60000);
 
       const startTime = startTimeDate.toLocaleTimeString('en-US', { hour12: false, hour: '2-digit', minute: '2-digit' });
       const endTime = endTimeDate.toLocaleTimeString('en-US', { hour12: false, hour: '2-digit', minute: '2-digit' });
 
       const newSignal = await storage.createSignal({
         pair,
-        action: aiResponse.action || "BUY/CALL",
-        confidence: aiResponse.confidence || 85,
+        action: finalAction,
+        confidence: avgConfidence,
         startTime: `${startTime} UTC`,
         endTime: `${endTime} UTC`,
         status: "active",
-        analysis: aiResponse.analysis || "Market trend analysis",
+        analysis: combinedAnalysis,
+        verifiers: verifiers,
       });
 
       res.status(201).json(newSignal);

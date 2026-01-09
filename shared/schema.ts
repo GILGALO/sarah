@@ -12,6 +12,7 @@ export const signals = pgTable("signals", {
   endTime: text("end_time").notNull(), // e.g. "15:05 EAT"
   status: text("status").notNull().default("active"), // "active", "completed"
   analysis: text("analysis").notNull(), // Reason for the signal
+  verifiers: jsonb("verifiers"), // List of models that verified the signal
   createdAt: timestamp("created_at").defaultNow(),
 });
 

@@ -127,8 +127,20 @@ export function SignalCard({ signal, isLoading }: SignalCardProps) {
             )}
           />
         </div>
+
+        {/* Verifiers info */}
+        {signal.verifiers && Array.isArray(signal.verifiers) && signal.verifiers.length > 0 && (
+          <div className="flex flex-wrap gap-2">
+            {(signal.verifiers as string[]).map((v) => (
+              <span key={v} className="px-2 py-0.5 rounded-full text-[10px] bg-primary/10 text-primary border border-primary/20 font-mono uppercase">
+                {v} Verified
+              </span>
+            ))}
+          </div>
+        )}
         
         {/* Analysis Text */}
+
         <div className="mt-4 p-4 rounded-lg bg-background/40 border border-border/50 text-sm text-muted-foreground font-mono">
            <span className="text-primary mr-2">AI_ANALYSIS:</span> 
            {signal.analysis}
