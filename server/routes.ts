@@ -7,24 +7,42 @@ import OpenAI from "openai";
 import Anthropic from "@anthropic-ai/sdk";
 import { GoogleGenAI } from "@google/genai";
 
-// Initialize AI clients using AI Integrations credentials
-const openai = new OpenAI({ 
-  apiKey: process.env.AI_INTEGRATIONS_OPENAI_API_KEY || process.env.OPENAI_API_KEY,
-  baseURL: process.env.AI_INTEGRATIONS_OPENAI_BASE_URL
-});
+// Lazy initialization of AI clients - only created when needed
+function getOpenAI() {
+  const apiKey = process.env.AI_INTEGRATIONS_OPENAI_API_KEY || process.env.OPENAI_API_KEY;
+  if (!apiKey) {
+    throw new Error("OpenAI API key not configured. Please set OPENAI_API_KEY.");
+  }
+  return new OpenAI({ 
+    apiKey,
+    baseURL: process.env.AI_INTEGRATIONS_OPENAI_BASE_URL
+  });
+}
 
-const anthropic = new Anthropic({
-  apiKey: process.env.AI_INTEGRATIONS_ANTHROPIC_API_KEY,
-  baseURL: process.env.AI_INTEGRATIONS_ANTHROPIC_BASE_URL,
-});
+function getAnthropic() {
+  const apiKey = process.env.AI_INTEGRATIONS_ANTHROPIC_API_KEY;
+  if (!apiKey) {
+    throw new Error("Anthropic API key not configured.");
+  }
+  return new Anthropic({
+    apiKey,
+    baseURL: process.env.AI_INTEGRATIONS_ANTHROPIC_BASE_URL,
+  });
+}
 
-const gemini = new GoogleGenAI({
-  apiKey: process.env.AI_INTEGRATIONS_GEMINI_API_KEY,
-  httpOptions: {
-    apiVersion: "",
-    baseUrl: process.env.AI_INTEGRATIONS_GEMINI_BASE_URL,
-  },
-});
+function getGemini() {
+  const apiKey = process.env.AI_INTEGRATIONS_GEMINI_API_KEY;
+  if (!apiKey) {
+    throw new Error("Gemini API key not configured.");
+  }
+  return new GoogleGenAI({
+    apiKey,
+    httpOptions: {
+      apiVersion: "",
+      baseUrl: process.env.AI_INTEGRATIONS_GEMINI_BASE_URL,
+    },
+  });
+}
 
 export async function registerRoutes(
   httpServer: Server,
@@ -58,14 +76,14 @@ export async function registerRoutes(
       Return only the JSON object.`;
 
       // 1. OpenAI (GPT-4o)
-      const gptTask = openai.chat.completions.create({
+      const gptTask = getOpenAI().chat.completions.create({
         model: "gpt-4o",
         messages: [{ role: "system", content: prompt }],
         response_format: { type: "json_object" }
       }).then(res => JSON.parse(res.choices[0].message.content || "{}"));
 
       // 2. Anthropic (Claude 3.5 Sonnet)
-      const claudeTask = anthropic.messages.create({
+      const claudeTask = getAnthropic().messages.create({
         model: "claude-sonnet-4-5",
         max_tokens: 1024,
         messages: [{ role: "user", content: prompt }],
@@ -79,7 +97,7 @@ export async function registerRoutes(
       });
 
       // 3. Gemini (Flash)
-      const geminiTask = gemini.getGenerativeModel({ model: "gemini-3-flash-preview" })
+      const geminiTask = getGemini().getGenerativeModel({ model: "gemini-3-flash-preview" })
         .generateContent(prompt)
         .then(res => {
           const text = res.response.text();
