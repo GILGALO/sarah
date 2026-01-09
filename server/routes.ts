@@ -75,17 +75,24 @@ export async function registerRoutes(
       Current Time: ${new Date().toLocaleTimeString()}
       Return only the JSON object.`;
 
-    // Triple-AI Verification Analysis
+    // Triple-AI Verification Analysis with individual error handling
+    const results: any[] = [];
+    
+    // 1. OpenAI (GPT-4o)
     try {
-      // 1. OpenAI (GPT-4o)
-      const gptTask = getOpenAI().chat.completions.create({
+      const gptRes = await getOpenAI().chat.completions.create({
         model: "gpt-4o",
         messages: [{ role: "system", content: prompt }],
         response_format: { type: "json_object" }
       }).then(res => JSON.parse(res.choices[0].message.content || "{}"));
+      results.push({ model: 'OpenAI', ...gptRes });
+    } catch (e) {
+      console.error("OpenAI Error:", e instanceof Error ? e.message : "Unknown error");
+    }
 
-      // 2. Anthropic (Claude 3.5 Sonnet)
-      const claudeTask = getAnthropic().messages.create({
+    // 2. Anthropic (Claude 3.5 Sonnet)
+    try {
+      const claudeRes = await getAnthropic().messages.create({
         model: "claude-sonnet-4-5",
         max_tokens: 1024,
         messages: [{ role: "user", content: prompt }],
@@ -94,73 +101,72 @@ export async function registerRoutes(
         const jsonMatch = text.match(/\{[\s\S]*\}/);
         return JSON.parse(jsonMatch ? jsonMatch[0] : text);
       });
+      results.push({ model: 'Anthropic', ...claudeRes });
+    } catch (e) {
+      console.error("Anthropic Error:", e instanceof Error ? e.message : "Unknown error");
+    }
 
-      // 3. Gemini (Flash)
-      const geminiTask = getGemini().getGenerativeModel({ model: "gemini-3-flash-preview" })
+    // 3. Gemini (Flash)
+    try {
+      const geminiRes = await getGemini().getGenerativeModel({ model: "gemini-3-flash-preview" })
         .generateContent(prompt)
         .then(res => {
           const text = res.response.text();
           const jsonMatch = text.match(/\{[\s\S]*\}/);
           return JSON.parse(jsonMatch ? jsonMatch[0] : text);
         });
-
-      // Run all AI analyses in parallel
-      const [gptRes, claudeRes, geminiRes] = await Promise.all([gptTask, claudeTask, geminiTask]);
-
-      const [gptResFinal, claudeResFinal, geminiResFinal] = [gptRes, claudeRes, geminiRes];
-
-      // Consensus logic
-      const results = [
-        { model: 'OpenAI', ...gptResFinal },
-        { model: 'Anthropic', ...claudeResFinal },
-        { model: 'Gemini', ...geminiResFinal }
-      ];
-
-      const buys = results.filter(r => r.action?.includes('BUY') || r.action?.includes('CALL'));
-      const sells = results.filter(r => r.action?.includes('SELL') || r.action?.includes('PUT'));
-
-      let finalAction, verifiers;
-      if (buys.length >= 2) {
-        finalAction = "BUY/CALL";
-        verifiers = buys.map(b => b.model);
-      } else if (sells.length >= 2) {
-        finalAction = "SELL/PUT";
-        verifiers = sells.map(s => s.model);
-      } else {
-        // Fallback to highest confidence if no consensus
-        const best = results.sort((a, b) => (b.confidence || 0) - (a.confidence || 0))[0];
-        finalAction = best.action || "BUY/CALL";
-        verifiers = [best.model];
-      }
-
-      const avgConfidence = Math.round(results.reduce((acc, r) => acc + (r.confidence || 0), 0) / results.length);
-      const combinedAnalysis = results.map(r => `${r.model}: ${r.analysis}`).join(" | ");
-      
-      // Calculate times
-      const now = new Date();
-      const roundedMinutes = Math.ceil((now.getMinutes() + 1) / 5) * 5;
-      const startTimeDate = new Date(now);
-      startTimeDate.setMinutes(roundedMinutes, 0, 0);
-      const endTimeDate = new Date(startTimeDate.getTime() + 5 * 60000);
-
-      const startTime = startTimeDate.toLocaleTimeString('en-US', { hour12: false, hour: '2-digit', minute: '2-digit' });
-      const endTime = endTimeDate.toLocaleTimeString('en-US', { hour12: false, hour: '2-digit', minute: '2-digit' });
-
-      const newSignal = await storage.createSignal({
-        pair,
-        action: finalAction,
-        confidence: avgConfidence,
-        startTime: `${startTime} UTC`,
-        endTime: `${endTime} UTC`,
-        status: "active",
-        analysis: combinedAnalysis,
-        verifiers: verifiers,
-      });
-
-      res.status(201).json(newSignal);
+      results.push({ model: 'Gemini', ...geminiRes });
     } catch (e) {
-      throw e;
+      console.error("Gemini Error:", e instanceof Error ? e.message : "Unknown error");
     }
+
+    if (results.length === 0) {
+      throw new Error("All AI providers failed or are unconfigured. Please check your API keys and quotas.");
+    }
+
+    // Consensus logic using whatever models succeeded
+    const buys = results.filter(r => r.action?.includes('BUY') || r.action?.includes('CALL'));
+    const sells = results.filter(r => r.action?.includes('SELL') || r.action?.includes('PUT'));
+
+    let finalAction, verifiers;
+    if (buys.length > results.length / 2) {
+      finalAction = "BUY/CALL";
+      verifiers = buys.map(b => b.model);
+    } else if (sells.length > results.length / 2) {
+      finalAction = "SELL/PUT";
+      verifiers = sells.map(s => s.model);
+    } else {
+      // Fallback to highest confidence if no majority
+      const best = results.sort((a, b) => (b.confidence || 0) - (a.confidence || 0))[0];
+      finalAction = best.action || (Math.random() > 0.5 ? "BUY/CALL" : "SELL/PUT");
+      verifiers = [best.model];
+    }
+
+    const avgConfidence = Math.round(results.reduce((acc, r) => acc + (r.confidence || 0), 0) / results.length);
+    const combinedAnalysis = results.map(r => `${r.model}: ${r.analysis}`).join(" | ");
+    
+    // Calculate times
+    const now = new Date();
+    const roundedMinutes = Math.ceil((now.getMinutes() + 1) / 5) * 5;
+    const startTimeDate = new Date(now);
+    startTimeDate.setMinutes(roundedMinutes, 0, 0);
+    const endTimeDate = new Date(startTimeDate.getTime() + 5 * 60000);
+
+    const startTime = startTimeDate.toLocaleTimeString('en-US', { hour12: false, hour: '2-digit', minute: '2-digit' });
+    const endTime = endTimeDate.toLocaleTimeString('en-US', { hour12: false, hour: '2-digit', minute: '2-digit' });
+
+    const newSignal = await storage.createSignal({
+      pair,
+      action: finalAction,
+      confidence: avgConfidence,
+      startTime: `${startTime} UTC`,
+      endTime: `${endTime} UTC`,
+      status: "active",
+      analysis: combinedAnalysis,
+      verifiers: verifiers,
+    });
+
+    res.status(201).json(newSignal);
     } catch (error) {
       console.error("Signal generation error:", error);
       res.status(500).json({ message: "Failed to generate signal" });
