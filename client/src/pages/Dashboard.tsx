@@ -180,8 +180,8 @@ export default function Dashboard() {
           <span>SERVER: US-EAST-1</span>
           <span>VERSION: 2.4.0-BETA</span>
         </div>
-        <div className="hidden md:block opacity-50">
-          POWERED BY OPENAI ANALYSIS ENGINE
+        <div className="hidden md:block opacity-50 uppercase tracking-widest">
+          TRIPLE-AI VERIFICATION ENGINE: GPT-4o | CLAUDE-3.5 | GEMINI-1.5
         </div>
       </footer>
     </div>
