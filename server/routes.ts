@@ -75,7 +75,8 @@ export async function registerRoutes(
       Current Time: ${new Date().toLocaleTimeString()}
       Return only the JSON object.`;
 
-      // Triple-AI Verification Analysis
+    // Triple-AI Verification Analysis
+    try {
       // 1. OpenAI (GPT-4o)
       const gptTask = getOpenAI().chat.completions.create({
         model: "gpt-4o",
@@ -157,6 +158,9 @@ export async function registerRoutes(
       });
 
       res.status(201).json(newSignal);
+    } catch (e) {
+      throw e;
+    }
     } catch (error) {
       console.error("Signal generation error:", error);
       res.status(500).json({ message: "Failed to generate signal" });
