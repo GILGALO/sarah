@@ -95,7 +95,7 @@ export function SignalCard({ signal, isLoading }: SignalCardProps) {
               isBuy ? "text-primary drop-shadow-[0_0_15px_rgba(34,197,94,0.3)]" : "text-destructive drop-shadow-[0_0_15px_rgba(239,68,68,0.3)]"
             )}>
               {isBuy ? <ArrowUpRight className="w-12 h-12 md:w-16 md:h-16" /> : <ArrowDownRight className="w-12 h-12 md:w-16 md:h-16" />}
-              {signal.action}
+              {String(signal.action)}
             </div>
           </div>
 
@@ -103,13 +103,13 @@ export function SignalCard({ signal, isLoading }: SignalCardProps) {
             <div className="flex items-center justify-end gap-3 text-sm md:text-base">
               <span className="text-muted-foreground">Start:</span>
               <span className="font-mono font-medium bg-background/50 px-2 py-1 rounded border border-border">
-                {signal.startTime}
+                {String(signal.startTime)}
               </span>
             </div>
             <div className="flex items-center justify-end gap-3 text-sm md:text-base">
               <span className="text-muted-foreground">End:</span>
               <span className="font-mono font-medium bg-background/50 px-2 py-1 rounded border border-border">
-                {signal.endTime}
+                {String(signal.endTime)}
               </span>
             </div>
           </div>
@@ -143,7 +143,7 @@ export function SignalCard({ signal, isLoading }: SignalCardProps) {
 
         <div className="mt-4 p-4 rounded-lg bg-background/40 border border-border/50 text-sm text-muted-foreground font-mono">
            <span className="text-primary mr-2">AI_ANALYSIS:</span> 
-           {signal.analysis}
+           {String(signal.analysis)}
         </div>
 
         <SocialShare signal={signal} />
