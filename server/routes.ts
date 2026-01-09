@@ -75,53 +75,36 @@ export async function registerRoutes(
       Current Time: ${new Date().toLocaleTimeString()}
       Return only the JSON object.`;
 
-      // Triple-AI Verification Analysis with Mock Fallback
-      let gptRes, claudeRes, geminiRes;
+      // Triple-AI Verification Analysis
+      // 1. OpenAI (GPT-4o)
+      const gptTask = getOpenAI().chat.completions.create({
+        model: "gpt-4o",
+        messages: [{ role: "system", content: prompt }],
+        response_format: { type: "json_object" }
+      }).then(res => JSON.parse(res.choices[0].message.content || "{}"));
 
-      try {
-        // 1. OpenAI (GPT-4o)
-        gptRes = await getOpenAI().chat.completions.create({
-          model: "gpt-4o",
-          messages: [{ role: "system", content: prompt }],
-          response_format: { type: "json_object" }
-        }).then(res => JSON.parse(res.choices[0].message.content || "{}"));
-      } catch (e) {
-        console.warn("OpenAI fallback active");
-        gptRes = { action: Math.random() > 0.5 ? "BUY/CALL" : "SELL/PUT", confidence: 85, analysis: "Technical bounce at support level (Mock)" };
-      }
+      // 2. Anthropic (Claude 3.5 Sonnet)
+      const claudeTask = getAnthropic().messages.create({
+        model: "claude-sonnet-4-5",
+        max_tokens: 1024,
+        messages: [{ role: "user", content: prompt }],
+      }).then(res => {
+        const text = res.content[0].type === 'text' ? res.content[0].text : '{}';
+        const jsonMatch = text.match(/\{[\s\S]*\}/);
+        return JSON.parse(jsonMatch ? jsonMatch[0] : text);
+      });
 
-      try {
-        // 2. Anthropic (Claude 3.5 Sonnet)
-        claudeRes = await getAnthropic().messages.create({
-          model: "claude-sonnet-4-5",
-          max_tokens: 1024,
-          messages: [{ role: "user", content: prompt }],
-        }).then(res => {
-          const text = res.content[0].type === 'text' ? res.content[0].text : '{}';
+      // 3. Gemini (Flash)
+      const geminiTask = getGemini().getGenerativeModel({ model: "gemini-3-flash-preview" })
+        .generateContent(prompt)
+        .then(res => {
+          const text = res.response.text();
           const jsonMatch = text.match(/\{[\s\S]*\}/);
           return JSON.parse(jsonMatch ? jsonMatch[0] : text);
         });
-      } catch (e) {
-        console.warn("Anthropic fallback active");
-        claudeRes = { action: Math.random() > 0.5 ? "BUY/CALL" : "SELL/PUT", confidence: 82, analysis: "RSI divergence detected (Mock)" };
-      }
 
-      try {
-        // 3. Gemini (Flash)
-        geminiRes = await getGemini().getGenerativeModel({ model: "gemini-3-flash-preview" })
-          .generateContent(prompt)
-          .then(res => {
-            const text = res.response.text();
-            const jsonMatch = text.match(/\{[\s\S]*\}/);
-            return JSON.parse(jsonMatch ? jsonMatch[0] : text);
-          });
-      } catch (e) {
-        console.warn("Gemini fallback active");
-        geminiRes = { action: Math.random() > 0.5 ? "BUY/CALL" : "SELL/PUT", confidence: 88, analysis: "Volume surge confirmed trend (Mock)" };
-      }
-
-      // Run all AI analyses in parallel would be faster, but we need try/catch blocks for fallback
-      // The results are already fetched or mocked above
+      // Run all AI analyses in parallel
+      const [gptRes, claudeRes, geminiRes] = await Promise.all([gptTask, claudeTask, geminiTask]);
 
       const [gptResFinal, claudeResFinal, geminiResFinal] = [gptRes, claudeRes, geminiRes];
 
